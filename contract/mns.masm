@@ -4,7 +4,7 @@ use.miden::account
 #! 
 #! Inputs: [NAME_WORD, ACCOUNT_ID]
 #! Outputs: []
-export.register
+proc.register
     push.0
     # [0(index), NAME_WORD, ACCOUNT_ID]
     exec.account::set_map_item dropw dropw
@@ -16,7 +16,7 @@ end
 #! 
 #! Inputs: [NAME_WORD]
 #! Outputs: [ACCOUNT_ID]
-export.lookup
+proc.lookup
   push.0
   # [0(index), NAME_WORD]
   exec.account::get_map_item
