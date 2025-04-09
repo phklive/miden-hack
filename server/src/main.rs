@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Not};
+use std::{collections::HashMap, ops::Not, time::Duration};
 
 use anyhow::Context;
 use axum::{
@@ -8,12 +8,19 @@ use axum::{
     routing::{get, put},
 };
 use miden_client::{
-    Client,
+    Client, Word,
     account::{Account, AccountBuilder, AccountStorageMode, AccountType, StorageSlot},
+    transaction::{
+        LocalTransactionProver, TransactionRequest, TransactionRequestBuilder, TransactionScript,
+    },
 };
 use miden_lib::transaction::TransactionKernel;
-use miden_objects::account::{AccountComponent, StorageMap};
+use miden_objects::{
+    account::{AccountComponent, StorageMap},
+    vm::Program,
+};
 use rand::Rng;
+use tokio::sync::{mpsc, oneshot};
 use tower_http::cors::{Any, CorsLayer};
 
 #[tokio::main]
@@ -92,14 +99,17 @@ async fn client() -> anyhow::Result<Client> {
     Ok(client)
 }
 
-#[derive(Clone, Copy)]
-struct AppState;
+#[derive(Clone)]
+struct AppState {
+    sender: mpsc::Sender<Command>,
+}
 
 async fn serve() -> anyhow::Result<()> {
+    let (tx, rx) = mpsc::channel(1024);
     let app = axum::Router::new()
         .route("/register", put(register))
         .route("/lookup", get(lookup))
-        .with_state(AppState)
+        .with_state(AppState { sender: tx })
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
@@ -129,10 +139,17 @@ async fn register(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<AppState>,
 ) -> Result<(), AppError> {
-    let name = params.get("name").context("missing `name` parameter")?;
-    let id = params.get("id").context("missing `id` parameter")?;
+    let name = params
+        .get("name")
+        .context("missing `name` parameter")?
+        .clone();
+    let id = params.get("id").context("missing `id` parameter")?.clone();
+
+    // let (tx, rx) = oneshot::channel();
 
     tracing::info!(name, id, "register called");
+
+    // state.sender.send_timeout(Command::Register { name, account, ret: tx }, Duration::from_secs(5)).await;
 
     Ok(())
 }
@@ -154,4 +171,43 @@ impl IntoResponse for AppError {
 
         (StatusCode::INTERNAL_SERVER_ERROR, report).into_response()
     }
+}
+
+enum Command {
+    Register {
+        name: String,
+        account: String,
+        ret: oneshot::Sender<Result<(), String>>,
+    },
+    Lookup {
+        name: String,
+        ret: oneshot::Sender<Result<String, String>>,
+    },
+}
+
+async fn run_client(
+    client: Client,
+    account: Account,
+    mut cmds: mpsc::Receiver<Command>,
+) -> anyhow::Result<()> {
+    while let Some(cmd) = cmds.recv().await {
+        match cmd {
+            Command::Register { name, account, ret } => todo!(),
+            Command::Lookup { name, ret } => {
+                // let script = client.compile_tx_script(inputs, program)
+                // let code = r#"
+
+                // "#;
+                // let program = Program::(mast_forest, entrypoint)
+                // let script = TransactionScript::new(code, []);
+                // let tx = TransactionRequestBuilder::new()
+                //     .with_custom_script(script)
+                //     .build()
+                //     .context("failed to build lookup tx")?;
+                // let result = client.new_transaction(account.id(), tx).await.context("lookup failed")?;
+            }
+        }
+    }
+
+    Ok(())
 }
