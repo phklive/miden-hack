@@ -17,9 +17,15 @@ export default function Home() {
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setName(e.target.value);
     setError('');
+    setLookupResult('');
   };
 
-  const handleRegister = (e: React.FormEvent) => {
+  const handleAddressChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setAddress(e.target.value);
+    setError('');
+  };
+
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!validateMidenName(name)) {
@@ -27,19 +33,36 @@ export default function Home() {
       return;
     }
 
+    if (!address) {
+      setError('Address is required');
+      return;
+    }
+
     setIsSubmitting(true);
     setError('');
 
-    // Mock API call - replace with your actual registration logic
-    setTimeout(() => {
-      setIsSubmitting(false);
-      alert(`Registered ${name} with address ${address}`);
+    try {
+      // Connect to your Rust server
+      const response = await fetch(`http://localhost:3001/register?name=${encodeURIComponent(name)}&id=${encodeURIComponent(address)}`, {
+        method: 'PUT',
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Registration failed: ${errorText}`);
+      }
+
       setName('');
       setAddress('');
-    }, 1000);
+      alert(`Successfully registered ${name}`);
+    } catch (err) {
+      setError(`Error: ${err instanceof Error ? err.message : 'Registration failed'}`);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleLookup = (e: React.FormEvent) => {
+  const handleLookup = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!validateMidenName(name)) {
@@ -50,13 +73,25 @@ export default function Home() {
     setIsSubmitting(true);
     setError('');
 
-    // Mock API call - replace with your actual lookup logic
-    setTimeout(() => {
+    try {
+      const response = await fetch(`http://localhost:3001/lookup?name=${encodeURIComponent(name)}`, {
+        method: 'GET',
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Lookup failed: ${errorText}`);
+      }
+
+      // When your server returns actual address data, parse it accordingly
+      const data = await response.text();
+      setLookupResult(data || "No address found");
+    } catch (err) {
+      setError(`Error: ${err instanceof Error ? err.message : 'Lookup failed'}`);
+      setLookupResult('');
+    } finally {
       setIsSubmitting(false);
-      // Generate a full example address without ...
-      const fullAddress = `0x${Math.random().toString(16).slice(2, 42)}`;
-      setLookupResult(fullAddress);
-    }, 1000);
+    }
   };
 
   return (
@@ -97,7 +132,11 @@ export default function Home() {
               ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg'
               : 'bg-white/5 text-gray-200 hover:bg-white/10'
               } transition-all duration-300`}
-            onClick={() => setMode('register')}
+            onClick={() => {
+              setMode('register');
+              setError('');
+              setLookupResult('');
+            }}
           >
             Register a Name
           </button>
@@ -107,7 +146,11 @@ export default function Home() {
               ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg'
               : 'bg-white/5 text-gray-200 hover:bg-white/10'
               } transition-all duration-300`}
-            onClick={() => setMode('lookup')}
+            onClick={() => {
+              setMode('lookup');
+              setError('');
+              setLookupResult('');
+            }}
           >
             Lookup a Name
           </button>
@@ -152,7 +195,7 @@ export default function Home() {
                   type="text"
                   id="address"
                   value={address}
-                  onChange={(e) => setAddress(e.target.value)}
+                  onChange={handleAddressChange}
                   className="w-full px-5 py-3 bg-white/5 border border-indigo-300/30 rounded-xl focus:ring-2 focus:ring-cyan-400 focus:border-transparent text-white transition-all duration-300 placeholder:text-indigo-200/50"
                   placeholder="0x..."
                   required
