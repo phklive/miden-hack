@@ -1,4 +1,4 @@
-use.kernel::account
+use.miden::account
 
 #! Registers the name to a specific account
 #! 
