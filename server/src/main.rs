@@ -1,4 +1,4 @@
-use std::{collections::HashMap, ops::Not, time::Duration};
+use std::{collections::HashMap, time::Duration};
 
 use anyhow::Context;
 use axum::{
@@ -128,11 +128,27 @@ struct AppError(anyhow::Error);
 async fn lookup(
     Query(params): Query<HashMap<String, String>>,
     State(state): State<AppState>,
-) -> Result<(), AppError> {
-    let name = params.get("name").context("missing `name` parameter")?;
+) -> Result<String, AppError> {
+    let name = params
+        .get("name")
+        .context("missing `name` parameter")?
+        .clone();
     tracing::info!(name, "lookup called");
 
-    Ok(())
+    let (tx, rx) = oneshot::channel();
+
+    state
+        .sender
+        .send_timeout(Command::Lookup { name, ret: tx }, Duration::from_secs(5))
+        .await
+        .context("failed to send lookup command to client")?;
+
+    let name = rx
+        .await
+        .context("command channel failed")?
+        .context("lookup failed")?;
+
+    Ok(name)
 }
 
 async fn register(
@@ -143,13 +159,28 @@ async fn register(
         .get("name")
         .context("missing `name` parameter")?
         .clone();
-    let id = params.get("id").context("missing `id` parameter")?.clone();
+    let account = params.get("id").context("missing `id` parameter")?.clone();
 
-    // let (tx, rx) = oneshot::channel();
+    let (tx, rx) = oneshot::channel();
 
-    tracing::info!(name, id, "register called");
+    tracing::info!(name, id=%account, "register called");
 
-    // state.sender.send_timeout(Command::Register { name, account, ret: tx }, Duration::from_secs(5)).await;
+    state
+        .sender
+        .send_timeout(
+            Command::Register {
+                name,
+                account,
+                ret: tx,
+            },
+            Duration::from_secs(5),
+        )
+        .await
+        .context("failed to send register command to client")?;
+
+    rx.await
+        .context("command channel failed")?
+        .context("registration failed")?;
 
     Ok(())
 }
@@ -177,11 +208,11 @@ enum Command {
     Register {
         name: String,
         account: String,
-        ret: oneshot::Sender<Result<(), String>>,
+        ret: oneshot::Sender<Result<(), anyhow::Error>>,
     },
     Lookup {
         name: String,
-        ret: oneshot::Sender<Result<String, String>>,
+        ret: oneshot::Sender<Result<String, anyhow::Error>>,
     },
 }
 
