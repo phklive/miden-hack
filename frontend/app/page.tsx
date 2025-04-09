@@ -128,7 +128,7 @@ export default function Home() {
         <div className="inline-flex p-1.5 rounded-2xl shadow-xl mb-8 bg-white/5 backdrop-blur-md border border-white/10" role="group">
           <button
             type="button"
-            className={`px-8 py-3.5 text-md font-medium rounded-xl ${mode === 'register'
+            className={`mr-2 px-8 py-3.5 text-md font-medium rounded-xl ${mode === 'register'
               ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg'
               : 'bg-white/5 text-gray-200 hover:bg-white/10'
               } transition-all duration-300`}
@@ -142,7 +142,7 @@ export default function Home() {
           </button>
           <button
             type="button"
-            className={`px-8 py-3.5 text-md font-medium rounded-xl ${mode === 'lookup'
+            className={`ml-2 px-8 py-3.5 text-md font-medium rounded-xl ${mode === 'lookup'
               ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg'
               : 'bg-white/5 text-gray-200 hover:bg-white/10'
               } transition-all duration-300`}
