@@ -186,7 +186,7 @@ enum Command {
 }
 
 async fn run_client(
-    client: Client,
+    mut client: Client,
     account: Account,
     mut cmds: mpsc::Receiver<Command>,
 ) -> anyhow::Result<()> {
@@ -194,17 +194,22 @@ async fn run_client(
         match cmd {
             Command::Register { name, account, ret } => todo!(),
             Command::Lookup { name, ret } => {
-                // let script = client.compile_tx_script(inputs, program)
-                // let code = r#"
-
-                // "#;
-                // let program = Program::(mast_forest, entrypoint)
-                // let script = TransactionScript::new(code, []);
-                // let tx = TransactionRequestBuilder::new()
-                //     .with_custom_script(script)
-                //     .build()
-                //     .context("failed to build lookup tx")?;
-                // let result = client.new_transaction(account.id(), tx).await.context("lookup failed")?;
+                let code = r#"
+                    start
+                        push.0
+                        drop
+                    end
+                 "#;
+                let script = client.compile_tx_script([], &code).unwrap();
+                let tx = TransactionRequestBuilder::new()
+                    .with_custom_script(script)
+                    .build()
+                    .context("failed to build lookup tx")?;
+                let result = client
+                    .new_transaction(account.id(), tx)
+                    .await
+                    .context("lookup failed")?;
+                println!("Result: {:?}", result)
             }
         }
     }
