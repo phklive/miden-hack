@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Not};
 
 use anyhow::Context;
 use axum::{
@@ -9,7 +9,7 @@ use axum::{
 };
 use miden_client::{
     Client,
-    account::{AccountBuilder, AccountStorageMode, AccountType, StorageSlot},
+    account::{Account, AccountBuilder, AccountStorageMode, AccountType, StorageSlot},
 };
 use miden_lib::transaction::TransactionKernel;
 use miden_objects::account::{AccountComponent, StorageMap};
@@ -18,19 +18,20 @@ use tower_http::cors::{Any, CorsLayer};
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
-    let subscriber = tracing_subscriber::fmt().finish();
+    tracing_subscriber::fmt().init();
+    tracing::info!("Spinning up");
     // Deploy account.
-    // let client = client().await.context("failed to create client")?;
-    // deploy_account(&client)
-    //     .await
-    //     .context("failed to deploy contract")?;
+    let mut client = client().await.context("failed to create client")?;
+    let account = deploy_account(&mut client)
+        .await
+        .context("failed to deploy contract")?;
 
-    tracing::info!("Account deployed");
+    tracing::info!(id=%account.id(), "Account deployed");
 
     serve().await.context("failed to serve")
 }
 
-async fn deploy_account(client: &Client) -> anyhow::Result<()> {
+async fn deploy_account(client: &mut Client) -> anyhow::Result<Account> {
     let slots = vec![StorageSlot::Map(StorageMap::new())];
     let assembler = TransactionKernel::assembler();
     let code = include_str!("../../contract/mns.masm");
@@ -38,14 +39,19 @@ async fn deploy_account(client: &Client) -> anyhow::Result<()> {
         AccountComponent::compile(code, assembler, slots).context("failed to compile contract")?;
 
     let mut rng = rand::rng();
-    let account = AccountBuilder::new(rng.random())
+    let (account, seed) = AccountBuilder::new(rng.random())
         .account_type(AccountType::RegularAccountImmutableCode)
         .storage_mode(AccountStorageMode::Private)
-        // .with_component(account_component)
+        .with_component(component)
         .build()
         .context("failed to build account")?;
 
-    Ok(())
+    client
+        .add_account(&account, seed.into(), false)
+        .await
+        .context("failed to add account")?;
+
+    Ok(account)
 }
 
 async fn client() -> anyhow::Result<Client> {
