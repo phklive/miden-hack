@@ -6,6 +6,8 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.97"
 axum = "0.8.3"
-miden-client = "0.8.1"
+miden-client = { version = "0.8.1", features = ["sqlite", "tonic"] }
+miden-objects = "0.8.1"
+rand = "0.9.0"
 tokio = { version = "1.44.2", features = ["rt-multi-thread"] }
 tracing = "0.1.41"
