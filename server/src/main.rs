@@ -69,7 +69,7 @@ async fn serve() -> anyhow::Result<()> {
         .route("/lookup", get(lookup))
         .with_state(AppState);
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:3000")
+    let listener = tokio::net::TcpListener::bind("0.0.0.0:3001")
         .await
         .context("failed to bind address")?;
     axum::serve(listener, app).await.context("failed to serve")
