@@ -1,0 +1,8 @@
+name = "mns"
+description = "Miden Name System"
+version = "1.0.0"
+supported-types = ["FungibleFaucet"]
+
+[[storage]]
+name = "mns_storage"
+slot = 0
