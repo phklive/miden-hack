@@ -7,52 +7,58 @@ use axum::{
     response::IntoResponse,
     routing::{get, put},
 };
-use miden_client::Client;
+use miden_client::{Client, account::AccountBuilder};
+use rand::Rng;
 
 #[tokio::main]
 async fn main() -> Result<(), anyhow::Error> {
+    let subscriber = tracing_subscriber::fmt().finish();
     // Deploy account.
+    // let client = client().await.context("failed to create client")?;
+
+    // let mut rng = rand::rng();
+    // let account = AccountBuilder::new(rng.random());
 
     serve().await.context("failed to serve")
 }
 
-// fn client() -> anyhow::Result<Client> {
-//     use std::sync::Arc;
+async fn client() -> anyhow::Result<Client> {
+    use std::sync::Arc;
 
-//     use miden_client::{
-//         Client, Felt,
-//         crypto::RpoRandomCoin,
-//         keystore::FilesystemKeyStore,
-//         rpc::{Endpoint, TonicRpcClient},
-//         store::{Store, sqlite_store::SqliteStore},
-//     };
-//     use miden_objects::crypto::rand::FeltRng;
-//     use rand::{Rng, rngs::StdRng};
+    use miden_client::{
+        Client, Felt,
+        crypto::RpoRandomCoin,
+        keystore::FilesystemKeyStore,
+        rpc::{Endpoint, TonicRpcClient},
+        store::{Store, sqlite_store::SqliteStore},
+    };
+    use miden_objects::crypto::rand::FeltRng;
+    use rand::{Rng, rngs::StdRng};
 
-//     // Create the SQLite store from the client configuration.
-//     let sqlite_store = SqliteStore::new("path/to/store".try_into()?).await?;
-//     let store = Arc::new(sqlite_store);
+    // Create the SQLite store from the client configuration.
+    let sqlite_store = SqliteStore::new("store.sqlite".try_into()?).await?;
+    let store = Arc::new(sqlite_store);
 
-//     // Generate a random seed for the RpoRandomCoin.
-//     let mut rng = rand::rng();
-//     let coin_seed: [u64; 4] = rng.random();
+    // Generate a random seed for the RpoRandomCoin.
+    let mut rng = rand::rng();
+    let coin_seed: [u64; 4] = rng.random();
 
-//     // Initialize the random coin using the generated seed.
-//     let rng = RpoRandomCoin::new(coin_seed.map(Felt::new));
-//     let keystore = FilesystemKeyStore::new("path/to/keys/directory".try_into()?)?;
+    // Initialize the random coin using the generated seed.
+    let rng = RpoRandomCoin::new(coin_seed.map(Felt::new));
+    let keystore = FilesystemKeyStore::new("keys".try_into()?)?;
 
-//     // Instantiate the client using a Tonic RPC client
-//     let endpoint = Endpoint::testnet();
-//     let client: Client = Client::new(
-//         Arc::new(TonicRpcClient::new(&endpoint, 10_000)),
-//         Box::new(rng),
-//         store,
-//         Arc::new(keystore),
-//         false, // Set to true for debug mode, if needed.
-//     );
+    // Instantiate the client using a Tonic RPC client
+    let endpoint = Endpoint::testnet();
+    let client: Client = Client::new(
+        Arc::new(TonicRpcClient::new(&endpoint, 10_000)),
+        Box::new(rng),
+        store,
+        Arc::new(keystore),
+        false, // Set to true for debug mode, if needed.
+    );
 
-//     Ok(client)
-// }
+    Ok(client)
+}
 
 #[derive(Clone, Copy)]
 struct AppState;
