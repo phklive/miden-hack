@@ -1,0 +1,23 @@
+use.kernel::account
+
+#! Registers the name to a specific account
+#! 
+#! Inputs: [NAME_WORD, ACCOUNT_ID]
+#! Outputs: []
+export.register
+    push.0
+    # [0(index), NAME_WORD, ACCOUNT_ID]
+    exec.account::set_map_item dropw dropw
+    # []
+end
+
+
+#! Lookup an account id registered for the given name
+#! 
+#! Inputs: [NAME_WORD]
+#! Outputs: [ACCOUNT_ID]
+export.lookup
+  push.0
+  # [0(index), NAME_WORD]
+  exec.account::get_map_item
+end
