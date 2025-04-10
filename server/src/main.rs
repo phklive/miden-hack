@@ -8,12 +8,15 @@ use axum::{
     routing::{get, put},
 };
 use miden_client::{
-    Client,
+    Client, Felt, Word,
     account::{Account, AccountBuilder, AccountStorageMode, AccountType, StorageSlot},
-    transaction::TransactionRequestBuilder,
+    transaction::{TransactionRequestBuilder, TransactionScript},
 };
-use miden_lib::transaction::TransactionKernel;
-use miden_objects::account::{AccountComponent, StorageMap};
+use miden_lib::{transaction::TransactionKernel, utils::PushMany};
+use miden_objects::{
+    account::{AccountComponent, StorageMap},
+    assembly::{DefaultSourceManager, LibraryPath, Module},
+};
 use tokio::sync::{mpsc, oneshot};
 use tower_http::cors::{Any, CorsLayer};
 
@@ -23,9 +26,17 @@ async fn main() -> Result<(), anyhow::Error> {
     tracing::info!("Spinning up");
 
     let (tx, rx) = mpsc::channel(100);
-    let state = AppState { sender: tx };
+    let (t, r) = oneshot::channel();
+    tx.send(Command::Register {
+        name: "mirko".to_string(),
+        account_id: "0x1234".to_string(),
+        ret: t,
+    })
+    .await
+    .unwrap();
+    // let state = AppState { sender: tx };
 
-    tokio::spawn(serve(state));
+    // tokio::spawn(serve(state));
     command_handler(rx)
         .await
         .context("failed to run client handler")
@@ -162,7 +173,14 @@ async fn register(
 
     state
         .sender
-        .send_timeout(Command::Register { name, ret: tx }, Duration::from_secs(5))
+        .send_timeout(
+            Command::Register {
+                name,
+                account_id: account,
+                ret: tx,
+            },
+            Duration::from_secs(5),
+        )
         .await
         .context("failed to send register command to client")?;
 
@@ -181,20 +199,26 @@ impl From<anyhow::Error> for AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> axum::response::Response {
-        let mut report = format!("{}", self.0);
+        (StatusCode::INTERNAL_SERVER_ERROR, format!("{}", self)).into_response()
+    }
+}
+
+impl std::fmt::Display for AppError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&format!("{}", self.0));
         let mut err = self.0.source();
         while let Some(cause) = err {
-            report.push_str(&format!("caused by: {cause}"));
+            f.write_str(&format!("caused by: {cause}"));
             err = cause.source();
         }
-
-        (StatusCode::INTERNAL_SERVER_ERROR, report).into_response()
+        Ok(())
     }
 }
 
 enum Command {
     Register {
         name: String,
+        account_id: String,
         ret: oneshot::Sender<Result<(), String>>,
     },
     Lookup {
@@ -209,30 +233,165 @@ async fn command_handler(mut cmds: mpsc::Receiver<Command>) -> anyhow::Result<()
         .await
         .context("failed to deploy contract")?;
 
-    // tracing::info!(id=%account.id(), "Account deployed");
+    let source_manager = Arc::new(DefaultSourceManager::default());
+    let lib = Module::parser(miden_objects::assembly::ModuleKind::Library)
+        .parse_str(
+            LibraryPath::new("hacky::mns").unwrap(),
+            include_str!("../../contract/mns.masm"),
+            &source_manager,
+        )
+        .unwrap();
+    let assembler = TransactionKernel::assembler().with_debug_mode(true);
+    let lib = assembler.clone().assemble_library([lib]).unwrap();
+
+    tracing::info!(id=%account.id(), "Account deployed");
     while let Some(cmd) = cmds.recv().await {
         match cmd {
-            Command::Register { name, ret } => todo!(),
+            Command::Register {
+                name,
+                ret,
+                account_id,
+            } => {
+                let result =
+                    handle_register(&mut client, &account, &assembler, &lib, name, account_id)
+                        .await
+                        .map_err(|err| format!("{}", AppError::from(err)));
+
+                ret.send(result).unwrap();
+            }
             Command::Lookup { name, ret } => {
-                let code = r#"
-                    start
-                        push.0
-                        drop
-                    end
-                 "#;
-                let script = client.compile_tx_script([], &code).unwrap();
-                let tx = TransactionRequestBuilder::new()
-                    .with_custom_script(script)
-                    .build()
-                    .context("failed to build lookup tx")?;
-                let result = client
-                    .new_transaction(account.id(), tx)
+                let result = handle_lookup(&mut client, &account, &assembler, &lib, name)
                     .await
-                    .context("lookup failed")?;
-                println!("Result: {:?}", result)
+                    .map_err(|err| format!("{}", AppError::from(err)));
+                ret.send(result).unwrap();
             }
         }
     }
 
     Ok(())
+}
+
+async fn handle_lookup(
+    client: &mut Client,
+    account: &Account,
+    assembler: &miden_objects::assembly::Assembler,
+    lib: &miden_objects::assembly::Library,
+    name: String,
+) -> Result<String, anyhow::Error> {
+    let name = str_to_word(&name).context("failed to encode name as word")?;
+    let code = format!(
+        r#"
+            use.hacky::mns
+            use.std::sys
+            
+            begin
+                push.{0}.{1}.{2}.{3}
+                call.mns::lookup
+
+                exec.sys::truncate_stack
+            end
+         "#,
+        name[0], name[1], name[2], name[3]
+    );
+    let script = TransactionScript::compile(
+        code,
+        [],
+        assembler.clone().with_library(lib.clone()).unwrap(),
+    )
+    .unwrap();
+    let tx = TransactionRequestBuilder::new()
+        .with_custom_script(script)
+        .build()
+        .context("failed to build lookup tx")?;
+    let result = client
+        .new_transaction(account.id(), tx)
+        .await
+        .context("lookup failed")?;
+    Ok(println!("Result: {:?}", result))
+}
+
+async fn handle_register(
+    client: &mut Client,
+    account: &Account,
+    assembler: &miden_objects::assembly::Assembler,
+    lib: &miden_objects::assembly::Library,
+    name: String,
+    account_id: String,
+) -> Result<(), anyhow::Error> {
+    let name = str_to_word(&name).context("failed to encode name as word")?;
+    let account_id = str_to_word(&account_id).context("failed to encode account ID as word")?;
+    let code = format!(
+        r#"
+                    use.hacky::mns
+                    use.std::sys
+                    
+                    begin
+                        push.111 debug.stack drop
+                    
+                        push.{0}.{1}.{2}.{3}
+                        push.{4}.{5}.{6}.{7}
+                        call.mns::register
+
+                        exec.sys::truncate_stack
+                    end
+                 "#,
+        name[0],
+        name[1],
+        name[2],
+        name[3],
+        account_id[0],
+        account_id[1],
+        account_id[2],
+        account_id[3]
+    );
+    let script = TransactionScript::compile(
+        code,
+        [],
+        assembler.clone().with_library(lib.clone()).unwrap(),
+    )
+    .unwrap();
+    client.sync_state().await.context("failed to sync state")?;
+    let tx = TransactionRequestBuilder::new()
+        .with_custom_script(script)
+        .build()
+        .context("failed to build register tx")?;
+    let result = client
+        .new_transaction(account.id(), tx)
+        .await
+        .context("register failed")?;
+    Ok(())
+}
+
+fn str_to_word(s: &str) -> anyhow::Result<Word> {
+    let bytes = s.as_bytes();
+    anyhow::ensure!(
+        bytes.len() <= 4 * 7,
+        "string `{s}` is too large for word: {} bytes",
+        bytes.len()
+    );
+
+    let mut word = Word::default();
+
+    for (i, felt) in bytes.chunks(7).enumerate() {
+        let mut felt = felt.to_vec();
+        felt.push_many(0, 8 - felt.len());
+        let felt = u64::from_be_bytes(felt.try_into().unwrap());
+        let felt = Felt::new(felt);
+
+        word[i] = felt;
+    }
+
+    Ok(word)
+}
+
+fn word_to_str(word: Word) -> String {
+    let mut bytes = Vec::new();
+
+    for felt in word {
+        let felt = felt.inner().to_be_bytes();
+
+        bytes.extend_from_slice(&felt[..7]);
+    }
+
+    String::from_utf8(bytes).unwrap()
 }
