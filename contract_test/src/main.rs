@@ -12,7 +12,7 @@ use miden_client::{
     account::{AccountBuilder, AccountStorageMode, AccountType, StorageSlot},
 };
 use miden_lib::transaction::TransactionKernel;
-use miden_objects::account::{AccountComponent, StorageMap};
+use miden_objects::account::{AccountComponent, AccountIdAnchor, StorageMap};
 use rand::Rng;
 use tower_http::cors::{Any, CorsLayer};
 
@@ -31,17 +31,20 @@ async fn main() -> Result<(), anyhow::Error> {
 }
 
 async fn deploy_account(client: &Client) -> anyhow::Result<()> {
-    let slots = vec![StorageSlot::Map(StorageMap::new())];
+    let slots = vec![StorageSlot::empty_map()];
     let assembler = TransactionKernel::assembler();
     let code = include_str!("../../contract/mns.masm");
-    let component =
-        AccountComponent::compile(code, assembler, slots).context("failed to compile contract")?;
+    let component = AccountComponent::compile(code, assembler, slots)
+        .context("failed to compile contract")?
+        .with_supported_type(AccountType::RegularAccountImmutableCode);
 
-    dbg!(&component);
+    // dbg!(&component);
     let mut rng = rand::rng();
+    let anchor = AccountIdAnchor::new_unchecked(anchor_epoch, anchor_block_commitment);
     let account = AccountBuilder::new(rng.random())
         .account_type(AccountType::RegularAccountImmutableCode)
         .storage_mode(AccountStorageMode::Private)
+        .anchor(anchor)
         .with_component(component)
         .build()
         .context("failed to build account")?;

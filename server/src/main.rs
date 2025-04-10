@@ -16,7 +16,8 @@ use miden_client::{
 };
 use miden_lib::transaction::TransactionKernel;
 use miden_objects::{
-    account::{AccountComponent, StorageMap},
+    Digest,
+    account::{AccountComponent, AccountIdAnchor, StorageMap},
     vm::Program,
 };
 use rand::Rng;
@@ -42,13 +43,16 @@ async fn deploy_account(client: &mut Client) -> anyhow::Result<Account> {
     let slots = vec![StorageSlot::Map(StorageMap::new())];
     let assembler = TransactionKernel::assembler();
     let code = include_str!("../../contract/mns.masm");
-    let component =
-        AccountComponent::compile(code, assembler, slots).context("failed to compile contract")?;
+    let component = AccountComponent::compile(code, assembler, slots)
+        .context("failed to compile contract")?
+        .with_supported_type(AccountType::RegularAccountImmutableCode);
 
+    let anchor = AccountIdAnchor::new_unchecked(0, Digest::default());
     let mut rng = rand::rng();
     let (account, seed) = AccountBuilder::new(rng.random())
         .account_type(AccountType::RegularAccountImmutableCode)
         .storage_mode(AccountStorageMode::Private)
+        .anchor(anchor)
         .with_component(component)
         .build()
         .context("failed to build account")?;
