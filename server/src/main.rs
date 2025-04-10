@@ -47,12 +47,12 @@ async fn deploy_account(client: &mut Client) -> anyhow::Result<Account> {
         .context("failed to compile contract")?
         .with_supported_type(AccountType::RegularAccountImmutableCode);
 
-    let anchor = AccountIdAnchor::new_unchecked(0, Digest::default());
+    let anchor_block = client.get_latest_epoch_block().await.unwrap();
     let mut rng = rand::rng();
     let (account, seed) = AccountBuilder::new(rng.random())
         .account_type(AccountType::RegularAccountImmutableCode)
         .storage_mode(AccountStorageMode::Private)
-        .anchor(anchor)
+        .anchor((&anchor_block).try_into().unwrap())
         .with_component(component)
         .build()
         .context("failed to build account")?;
