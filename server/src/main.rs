@@ -1,4 +1,4 @@
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use anyhow::Context;
 use axum::{
@@ -8,19 +8,12 @@ use axum::{
     routing::{get, put},
 };
 use miden_client::{
-    Client, Word,
+    Client,
     account::{Account, AccountBuilder, AccountStorageMode, AccountType, StorageSlot},
-    transaction::{
-        LocalTransactionProver, TransactionRequest, TransactionRequestBuilder, TransactionScript,
-    },
+    transaction::TransactionRequestBuilder,
 };
 use miden_lib::transaction::TransactionKernel;
-use miden_objects::{
-    Digest,
-    account::{AccountComponent, AccountIdAnchor, StorageMap},
-    vm::Program,
-};
-use rand::Rng;
+use miden_objects::account::{AccountComponent, StorageMap};
 use tokio::sync::{mpsc, oneshot};
 use tower_http::cors::{Any, CorsLayer};
 
@@ -28,15 +21,14 @@ use tower_http::cors::{Any, CorsLayer};
 async fn main() -> Result<(), anyhow::Error> {
     tracing_subscriber::fmt().init();
     tracing::info!("Spinning up");
-    // Deploy account.
-    let mut client = client().await.context("failed to create client")?;
-    let account = deploy_account(&mut client)
+
+    let (tx, rx) = mpsc::channel(100);
+    let state = AppState { sender: tx };
+
+    tokio::spawn(serve(state));
+    command_handler(rx)
         .await
-        .context("failed to deploy contract")?;
-
-    tracing::info!(id=%account.id(), "Account deployed");
-
-    serve().await.context("failed to serve")
+        .context("failed to run client handler")
 }
 
 async fn deploy_account(client: &mut Client) -> anyhow::Result<Account> {
@@ -48,8 +40,11 @@ async fn deploy_account(client: &mut Client) -> anyhow::Result<Account> {
         .with_supported_type(AccountType::RegularAccountImmutableCode);
 
     let anchor_block = client.get_latest_epoch_block().await.unwrap();
-    let mut rng = rand::rng();
-    let (account, seed) = AccountBuilder::new(rng.random())
+    tracing::info!("anchor block");
+    let mut seed: [u8; 32] = Default::default();
+    seed[0] = 0x13;
+    seed[12] = 0x44;
+    let (account, seed) = AccountBuilder::new(seed)
         .account_type(AccountType::RegularAccountImmutableCode)
         .storage_mode(AccountStorageMode::Private)
         .anchor((&anchor_block).try_into().unwrap())
@@ -58,7 +53,7 @@ async fn deploy_account(client: &mut Client) -> anyhow::Result<Account> {
         .context("failed to build account")?;
 
     client
-        .add_account(&account, seed.into(), false)
+        .add_account(&account, seed.into(), true)
         .await
         .context("failed to add account")?;
 
@@ -66,17 +61,14 @@ async fn deploy_account(client: &mut Client) -> anyhow::Result<Account> {
 }
 
 async fn client() -> anyhow::Result<Client> {
-    use std::sync::Arc;
-
     use miden_client::{
         Client, Felt,
         crypto::RpoRandomCoin,
         keystore::FilesystemKeyStore,
         rpc::{Endpoint, TonicRpcClient},
-        store::{Store, sqlite_store::SqliteStore},
+        store::sqlite_store::SqliteStore,
     };
-    use miden_objects::crypto::rand::FeltRng;
-    use rand::{Rng, rngs::StdRng};
+    use rand::Rng;
 
     // Create the SQLite store from the client configuration.
     let sqlite_store = SqliteStore::new("store.sqlite".try_into()?).await?;
@@ -108,12 +100,11 @@ struct AppState {
     sender: mpsc::Sender<Command>,
 }
 
-async fn serve() -> anyhow::Result<()> {
-    let (tx, rx) = mpsc::channel(1024);
+async fn serve(state: AppState) -> anyhow::Result<()> {
     let app = axum::Router::new()
         .route("/register", put(register))
         .route("/lookup", get(lookup))
-        .with_state(AppState { sender: tx })
+        .with_state(state)
         .layer(
             CorsLayer::new()
                 .allow_origin(Any)
@@ -150,7 +141,7 @@ async fn lookup(
     let name = rx
         .await
         .context("command channel failed")?
-        .context("lookup failed")?;
+        .map_err(|err| anyhow::anyhow!("lookup failed: {err}"))?;
 
     Ok(name)
 }
@@ -171,20 +162,13 @@ async fn register(
 
     state
         .sender
-        .send_timeout(
-            Command::Register {
-                name,
-                account,
-                ret: tx,
-            },
-            Duration::from_secs(5),
-        )
+        .send_timeout(Command::Register { name, ret: tx }, Duration::from_secs(5))
         .await
         .context("failed to send register command to client")?;
 
     rx.await
         .context("command channel failed")?
-        .context("registration failed")?;
+        .map_err(|err| anyhow::anyhow!("lookup failed: {err}"))?;
 
     Ok(())
 }
@@ -211,23 +195,24 @@ impl IntoResponse for AppError {
 enum Command {
     Register {
         name: String,
-        account: String,
-        ret: oneshot::Sender<Result<(), anyhow::Error>>,
+        ret: oneshot::Sender<Result<(), String>>,
     },
     Lookup {
         name: String,
-        ret: oneshot::Sender<Result<String, anyhow::Error>>,
+        ret: oneshot::Sender<Result<String, String>>,
     },
 }
 
-async fn run_client(
-    mut client: Client,
-    account: Account,
-    mut cmds: mpsc::Receiver<Command>,
-) -> anyhow::Result<()> {
+async fn command_handler(mut cmds: mpsc::Receiver<Command>) -> anyhow::Result<()> {
+    let mut client = client().await.context("failed to create client")?;
+    let account = deploy_account(&mut client)
+        .await
+        .context("failed to deploy contract")?;
+
+    // tracing::info!(id=%account.id(), "Account deployed");
     while let Some(cmd) = cmds.recv().await {
         match cmd {
-            Command::Register { name, account, ret } => todo!(),
+            Command::Register { name, ret } => todo!(),
             Command::Lookup { name, ret } => {
                 let code = r#"
                     start
